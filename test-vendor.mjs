@@ -58,7 +58,7 @@ test('esm format: provenance header + verbatim source', () => {
   const r = run(['--format', 'esm', '--out', 'out.js'], dir);
   assert.equal(r.status, 0, r.stderr);
   const out = readFileSync(join(dir, 'out.js'), 'utf8');
-  assert.ok(out.startsWith(`// VENDORED from ${pkg.name}`));
+  assert.ok(out.startsWith(`// VENDORED from ${pkg.name} v${pkg.version} (github:`));
   assert.ok(out.includes('DO NOT EDIT'));
   assert.ok(out.endsWith(source), 'esm output must end with the unmodified source');
 });

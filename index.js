@@ -1,4 +1,4 @@
-// @jfs/cache-kit v0.1.0 — shared, dependency-free client-side storage / cache
+// @jfs/cache-kit — shared, dependency-free client-side storage / cache
 // primitives for the JFS family of buildless static sites.
 //
 // Four sibling apps grew four different wrappers around the same two browser
