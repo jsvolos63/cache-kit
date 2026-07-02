@@ -1,0 +1,29 @@
+# Runs the kit's test suite on every push and PR. Unlike dom-kit there is no
+# jsdom devDependency — the suite hand-rolls its localStorage / IndexedDB
+# fakes — so no install step is needed: index.js imports nothing and the
+# tests run on the node:test runner alone.
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Syntax-check the shipped module
+        run: node --check index.js
+
+      - name: Run tests
+        run: npm test
