@@ -152,11 +152,17 @@ runtime. Follow `netlify-kit`'s vendoring model:
    }
    ```
 
-2. Add a `scripts/vendor-cache-kit.mjs` that copies
-   `node_modules/@jfs/cache-kit/index.js` into the app tree (ESM copy; plus
-   an export-stripped `index.global.js` for classic-script concatenation
-   builds like JFS-Sports'), and wire it into the repo's existing
-   `vendor:sync` / `vendor:check` npm scripts. CI gates `vendor:check`, so a
+2. Wire the kit's own vendoring CLI (`jfs-cache-kit-vendor`, shipped as
+   `bin/vendor.mjs`) into the repo's `vendor:sync` / `vendor:check` npm
+   scripts — no hand-rolled `scripts/vendor-cache-kit.mjs` needed:
+
+   ```json
+   "vendor:sync":  "jfs-cache-kit-vendor --format esm --out js/vendor/cache-kit/index.js",
+   "vendor:check": "jfs-cache-kit-vendor --format esm --out js/vendor/cache-kit/index.js --check"
+   ```
+
+   Use `--format bare` for an export-stripped copy for classic-script
+   concatenation builds (JFS-Sports' pattern). CI gates `vendor:check`, so a
    pin bump without a regenerated vendored copy fails the build.
 
 3. To upgrade: bump the pinned SHA, `npm install && npm run vendor:sync`,
