@@ -173,8 +173,9 @@ runtime. Follow `netlify-kit`'s vendoring model:
 
 Semver, starting at `0.1.0`. On every change to `index.js`:
 
-- bump `version` in `package.json` **and** the `@jfs/cache-kit vX.Y.Z` header
-  comment at the top of `index.js` — same value, same commit;
+- bump `version` in `package.json` (the `index.js` banner deliberately
+  carries no version — vendored copies get `v${pkg.version}` stamped by the
+  shared vendor CLI, so there is nothing to keep in sync by hand);
 - tag the release commit `vX.Y.Z` (tags are for humans; consumers still pin
   by commit SHA).
 
