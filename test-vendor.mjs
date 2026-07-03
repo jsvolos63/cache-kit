@@ -1,6 +1,7 @@
-// Tests for bin/vendor.mjs — the kit-side vendoring CLI. Generic on purpose:
-// the same test file ships in every @jfs kit and derives its expectations
-// from the kit's own index.js, so it keeps passing as the kit's API grows.
+// Tests for bin/vendor.mjs — drives the kit's bin shim over @jfs/vendor-cli.
+// Generic on purpose: the same test file ships in every @jfs kit and derives
+// its expectations from the kit's own index.js, so it keeps passing as the
+// kit's API grows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
