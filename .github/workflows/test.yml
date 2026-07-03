@@ -1,7 +1,7 @@
 # Runs the kit's test suite on every push and PR. Unlike dom-kit there is no
 # jsdom devDependency — the suite hand-rolls its localStorage / IndexedDB
-# fakes — so no install step is needed: index.js imports nothing and the
-# tests run on the node:test runner alone.
+# fakes — but the vendor CLI shim (bin/vendor.mjs) imports @jfs/vendor-cli,
+# so an install step is required before the tests.
 name: Test
 
 on:
@@ -24,6 +24,9 @@ jobs:
 
       - name: Syntax-check the shipped module
         run: node --check index.js
+
+      - name: Install dependencies
+        run: npm install
 
       - name: Run tests
         run: npm test
