@@ -316,6 +316,28 @@ describe('writeTtlJson / readTtlJson / readTtlJsonTimestamp (market-monitor {ts,
         assert.deepEqual(readTtlJson('main', 60_000), { a: 1 });
     });
 
+    test('a poisoned __proto__ entry does not pollute the returned object prototype', () => {
+        const ls = installLocalStorage(makeFakeLocalStorage());
+        // Raw JSON so "__proto__" lands as an OWN key (an object literal would
+        // set the prototype instead). This is the market-monitor Object.assign
+        // threat: readTtlJson's result is assigned onto app state.
+        ls.setItem('poison', `{"ts":${Date.now()},"data":{"__proto__":{"polluted":1}}}`);
+        const data = readTtlJson('poison', 60_000);
+        assert.notEqual(data, null);
+        // Global Object.prototype must be untouched...
+        assert.equal({}.polluted, undefined);
+        // ...and the returned object must not inherit the poisoned proto.
+        assert.equal(data.polluted, undefined);
+        assert.equal(Object.getPrototypeOf(data), Object.prototype);
+        // The dangerous own key must be stripped, so it can't propagate.
+        assert.equal(Object.prototype.hasOwnProperty.call(data, '__proto__'), false);
+        // Simulating the consumer's Object.assign onto app state must stay clean.
+        const state = {};
+        Object.assign(state, data);
+        assert.equal(state.polluted, undefined);
+        assert.equal({}.polluted, undefined);
+    });
+
     test('readTtlJsonTimestamp returns ts while fresh, without validating data shape', () => {
         const ls = installLocalStorage(makeFakeLocalStorage());
         const ts = Date.now() - 1000;

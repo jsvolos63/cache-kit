@@ -111,6 +111,25 @@ export function safeSetItem(key, value, { ownedKeys = [] } = {}) {
 // ---------------------------------------------------------------------------
 // Tier 1c — JSON snapshots with TTL
 // ---------------------------------------------------------------------------
+//
+// Prototype-pollution defense for parsed localStorage entries: JSON.parse
+// materializes a `"__proto__"` (or `constructor`/`prototype`) JSON key as an
+// OWN property, and callers Object.assign the parsed data onto app state —
+// which invokes the real `__proto__` setter and would re-point the consumer's
+// prototype chain. `depollute` strips those dangerous own keys from the
+// freshly-parsed object so a poisoned entry can neither pollute this object
+// nor carry the payload forward through a later Object.assign. The object
+// keeps its ordinary prototype (callers and round-trip tests still see a plain
+// object); shape validation still runs on the raw parse first.
+const _POLLUTION_KEYS = ['__proto__', 'constructor', 'prototype'];
+function depollute(parsed) {
+    if (parsed == null || typeof parsed !== 'object') return parsed;
+    for (const k of _POLLUTION_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(parsed, k)) delete parsed[k];
+    }
+    return parsed;
+}
+
 // Two on-disk shapes coexist in the family; both are kept byte-for-byte so
 // existing users' stored data keeps parsing after adoption:
 //
@@ -138,7 +157,10 @@ export function saveSnapshot(key, payload) {
 export function readSnapshot(key, maxAgeMs) {
     try {
         const snap = JSON.parse(localStorage.getItem(key));
-        if (snap && Date.now() - snap.at <= maxAgeMs) return snap;
+        if (snap && Date.now() - snap.at <= maxAgeMs) {
+            depollute(snap.payload);
+            return depollute(snap);
+        }
     } catch { /* corrupt or missing */ }
     return null;
 }
@@ -168,7 +190,7 @@ export function readTtlJson(key, maxAgeMs) {
         if (!obj || typeof obj !== 'object' || typeof obj.ts !== 'number') return null;
         if (Date.now() - obj.ts >= maxAgeMs) return null;
         if (obj.data == null || typeof obj.data !== 'object' || Array.isArray(obj.data)) return null;
-        return obj.data;
+        return depollute(obj.data);
     } catch { return null; }
 }
 
@@ -182,7 +204,7 @@ export function readTtlJsonTimestamp(key, maxAgeMs) {
     try {
         const raw = localStorage.getItem(key);
         if (!raw) return null;
-        const obj = JSON.parse(raw);
+        const obj = depollute(JSON.parse(raw));
         if (!obj || typeof obj.ts !== 'number') return null;
         if (Date.now() - obj.ts >= maxAgeMs) return null;
         return obj.ts;
@@ -352,7 +374,7 @@ export function createCacheStore(deps = {}) {
             if (raw == null) continue;
             if (!mirror.has(k)) {
                 try {
-                    const parsed = JSON.parse(raw);
+                    const parsed = depollute(JSON.parse(raw));
                     mirror.set(k, parsed);
                     persist(k, parsed).catch(() => {});
                 } catch { /* skip unparseable legacy entry */ }
