@@ -528,6 +528,26 @@ describe('CacheStore legacy migration', () => {
         assert.equal(JSON.parse(facade.getItem('tz')), 'America/Chicago');
     });
 
+    test('localStorageFacade.setItem strips a poisoned __proto__ key on ingest', async () => {
+        const store = createCacheStore({ indexedDB: null, localStorage: makeFakeLocalStorage() });
+        await store.init();
+        const facade = store.localStorageFacade;
+
+        // Raw JSON so "__proto__" lands as an OWN key of the parsed object
+        // (an object literal would just set the prototype and vanish).
+        facade.setItem('poison', '{"__proto__":{"polluted":1},"a":1}');
+
+        const stored = store.get('poison');
+        assert.equal(stored.a, 1, 'legitimate keys survive');
+        assert.equal(Object.prototype.hasOwnProperty.call(stored, '__proto__'), false,
+            'the dangerous own key must be stripped before it enters the store');
+        assert.equal({}.polluted, undefined, 'Object.prototype must stay clean');
+
+        // And the round-trip out of getItem carries no payload either.
+        const roundTripped = JSON.parse(facade.getItem('poison'));
+        assert.equal(Object.prototype.hasOwnProperty.call(roundTripped, '__proto__'), false);
+    });
+
     test('skips unparseable legacy entries without throwing', async () => {
         const ls = makeFakeLocalStorage({
             'app_cache_2026-04-30': '{not json',

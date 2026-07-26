@@ -474,7 +474,12 @@ export function createCacheStore(deps = {}) {
         },
         setItem(key, value) {
             try {
-                cacheSet(key, JSON.parse(value));
+                // depollute: same defense as the Tier-1 readers — a poisoned
+                // `"__proto__"` JSON key parsed here would round-trip through
+                // the store (structuredClone and JSON.stringify both preserve
+                // it as an own property) and out of getItem to callers that
+                // JSON.parse + Object.assign it onto app state.
+                cacheSet(key, depollute(JSON.parse(value)));
             } catch {
                 // Non-JSON value (e.g. a bare string). Store as-is.
                 cacheSet(key, value);
