@@ -114,18 +114,59 @@ export function safeSetItem(key, value, { ownedKeys = [] } = {}) {
 //
 // Prototype-pollution defense for parsed localStorage entries: JSON.parse
 // materializes a `"__proto__"` (or `constructor`/`prototype`) JSON key as an
-// OWN property, and callers Object.assign the parsed data onto app state —
-// which invokes the real `__proto__` setter and would re-point the consumer's
-// prototype chain. `depollute` strips those dangerous own keys from the
-// freshly-parsed object so a poisoned entry can neither pollute this object
-// nor carry the payload forward through a later Object.assign. The object
-// keeps its ordinary prototype (callers and round-trip tests still see a plain
-// object); shape validation still runs on the raw parse first.
+// OWN property, and callers Object.assign / deep-merge the parsed data onto
+// app state — which invokes the real `__proto__` setter and would re-point the
+// consumer's prototype chain (or `Object.prototype` itself, for a deep merge).
+//
+// The strip must be TOTAL: an earlier version only cleaned the top-level
+// object, so `{"a":{"__proto__":{"isAdmin":true}}}` walked straight through
+// the guard one key deeper and polluted any consumer that deep-merged the
+// result. Ingestion therefore parses through `parseSafeJson`, whose reviver
+// drops the three dangerous keys at EVERY level (including inside arrays) —
+// one chokepoint that cannot miss a nesting depth. Well-formed values are
+// otherwise untouched: same shape, same values, ordinary prototypes, so
+// callers and round-trip tests still see plain objects. Shape validation still
+// runs on the parse result.
 const _POLLUTION_KEYS = ['__proto__', 'constructor', 'prototype'];
+const _isPollutionKey = (k) => k === '__proto__' || k === 'constructor' || k === 'prototype';
+
+// JSON.parse reviver: returning undefined deletes the key from its holder, so
+// a dangerous key is removed at whatever depth it appears (array elements
+// included — their own keys are visited too). Applied bottom-up by the spec,
+// so nothing can be re-introduced after the fact.
+function _pollutionReviver(key, value) {
+    return _isPollutionKey(key) ? undefined : value;
+}
+
+/** JSON.parse with every `__proto__`/`constructor`/`prototype` key stripped at
+ * every level. Throws on malformed JSON exactly like JSON.parse. */
+function parseSafeJson(raw) {
+    return JSON.parse(raw, _pollutionReviver);
+}
+
+// Belt-and-braces for values that did NOT come through parseSafeJson: walks
+// own enumerable values (objects AND array elements) and deletes the dangerous
+// own keys at every level. Iterative with a WeakSet seen-guard (cyclic input is
+// visited once) and a depth cap, so a hostile shape can't hang or blow the
+// stack. Mutates in place and returns the same reference.
+const _MAX_DEPOLLUTE_DEPTH = 64;
 function depollute(parsed) {
     if (parsed == null || typeof parsed !== 'object') return parsed;
-    for (const k of _POLLUTION_KEYS) {
-        if (Object.prototype.hasOwnProperty.call(parsed, k)) delete parsed[k];
+    const seen = new WeakSet();
+    const stack = [[parsed, 0]];
+    while (stack.length) {
+        const [node, depth] = stack.pop();
+        if (node == null || typeof node !== 'object' || seen.has(node)) continue;
+        seen.add(node);
+        if (!Array.isArray(node)) {
+            for (const k of _POLLUTION_KEYS) {
+                if (Object.prototype.hasOwnProperty.call(node, k)) delete node[k];
+            }
+        }
+        if (depth >= _MAX_DEPOLLUTE_DEPTH) continue;
+        for (const v of Object.values(node)) {
+            if (v !== null && typeof v === 'object') stack.push([v, depth + 1]);
+        }
     }
     return parsed;
 }
@@ -156,9 +197,11 @@ export function saveSnapshot(key, payload) {
  */
 export function readSnapshot(key, maxAgeMs) {
     try {
-        const snap = JSON.parse(localStorage.getItem(key));
+        const snap = parseSafeJson(localStorage.getItem(key));
         if (snap && Date.now() - snap.at <= maxAgeMs) {
-            depollute(snap.payload);
+            // parseSafeJson already stripped every level; depollute is the
+            // second layer in case a future call site hands over a value that
+            // did not come through the reviver.
             return depollute(snap);
         }
     } catch { /* corrupt or missing */ }
@@ -186,7 +229,7 @@ export function readTtlJson(key, maxAgeMs) {
     try {
         const raw = localStorage.getItem(key);
         if (!raw) return null;
-        const obj = JSON.parse(raw);
+        const obj = parseSafeJson(raw);
         if (!obj || typeof obj !== 'object' || typeof obj.ts !== 'number') return null;
         if (Date.now() - obj.ts >= maxAgeMs) return null;
         if (obj.data == null || typeof obj.data !== 'object' || Array.isArray(obj.data)) return null;
@@ -204,7 +247,7 @@ export function readTtlJsonTimestamp(key, maxAgeMs) {
     try {
         const raw = localStorage.getItem(key);
         if (!raw) return null;
-        const obj = depollute(JSON.parse(raw));
+        const obj = depollute(parseSafeJson(raw));
         if (!obj || typeof obj.ts !== 'number') return null;
         if (Date.now() - obj.ts >= maxAgeMs) return null;
         return obj.ts;
@@ -374,7 +417,7 @@ export function createCacheStore(deps = {}) {
             if (raw == null) continue;
             if (!mirror.has(k)) {
                 try {
-                    const parsed = depollute(JSON.parse(raw));
+                    const parsed = depollute(parseSafeJson(raw));
                     mirror.set(k, parsed);
                     persist(k, parsed).catch(() => {});
                 } catch { /* skip unparseable legacy entry */ }
@@ -474,12 +517,13 @@ export function createCacheStore(deps = {}) {
         },
         setItem(key, value) {
             try {
-                // depollute: same defense as the Tier-1 readers — a poisoned
-                // `"__proto__"` JSON key parsed here would round-trip through
-                // the store (structuredClone and JSON.stringify both preserve
-                // it as an own property) and out of getItem to callers that
-                // JSON.parse + Object.assign it onto app state.
-                cacheSet(key, depollute(JSON.parse(value)));
+                // parseSafeJson: same defense as the Tier-1 readers — a
+                // poisoned `"__proto__"` JSON key parsed here (at ANY depth)
+                // would round-trip through the store (structuredClone and
+                // JSON.stringify both preserve it as an own property) and out
+                // of getItem to callers that JSON.parse + Object.assign or
+                // deep-merge it onto app state.
+                cacheSet(key, depollute(parseSafeJson(value)));
             } catch {
                 // Non-JSON value (e.g. a bare string). Store as-is.
                 cacheSet(key, value);

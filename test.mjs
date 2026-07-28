@@ -350,6 +350,185 @@ describe('writeTtlJson / readTtlJson / readTtlJsonTimestamp (market-monitor {ts,
 });
 
 // ---------------------------------------------------------------------------
+// Prototype-pollution defense — the strip must be TOTAL
+// ---------------------------------------------------------------------------
+//
+// Regression cover for the defect where only the TOP-LEVEL object was
+// cleaned: a dangerous key one (or ten) levels down survived, and a consumer
+// that deep-merged the result polluted Object.prototype globally. Every case
+// below finishes by deep-merging the returned value into a fresh object and
+// asserting `({}).polluted === undefined`.
+
+// A naive recursive merge — exactly the consumer shape the guard protects.
+// It walks into plain objects, so an own `__proto__` key that survived
+// ingestion would be assigned through the real setter and poison the target's
+// prototype chain (i.e. Object.prototype).
+function deepMerge(target, source) {
+    for (const k of Object.keys(source)) {
+        const v = source[k];
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            if (!target[k] || typeof target[k] !== 'object') target[k] = {};
+            deepMerge(target[k], v);
+        } else {
+            target[k] = v;
+        }
+    }
+    return target;
+}
+
+// Any own dangerous key anywhere in the tree fails the check.
+function assertNoDangerousKeys(node, path = '$', seen = new WeakSet()) {
+    if (node === null || typeof node !== 'object' || seen.has(node)) return;
+    seen.add(node);
+    for (const k of ['__proto__', 'constructor', 'prototype']) {
+        assert.equal(Object.prototype.hasOwnProperty.call(node, k), false,
+            `own "${k}" survived at ${path}`);
+    }
+    for (const [k, v] of Object.entries(node)) assertNoDangerousKeys(v, `${path}.${k}`, seen);
+}
+
+describe('prototype-pollution defense strips at every nesting level', () => {
+    afterEach(() => {
+        uninstallLocalStorage();
+        // Fail loudly (and stop the poison leaking into later tests) if any
+        // case actually polluted the global prototype.
+        assert.equal({}.polluted, undefined);
+        assert.equal({}.isAdmin, undefined);
+    });
+
+    test('readTtlJson strips a NESTED __proto__ (the reported defect)', () => {
+        const ls = installLocalStorage(makeFakeLocalStorage());
+        ls.setItem('poison', `{"ts":${Date.now()},"data":{"a":{"__proto__":{"isAdmin":true}}}}`);
+        const data = readTtlJson('poison', 60_000);
+        assert.notEqual(data, null);
+        assert.equal(Object.prototype.hasOwnProperty.call(data.a, '__proto__'), false);
+        assertNoDangerousKeys(data);
+        deepMerge({}, data);
+        assert.equal({}.isAdmin, undefined);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('readTtlJson strips a __proto__ inside an ARRAY element', () => {
+        const ls = installLocalStorage(makeFakeLocalStorage());
+        ls.setItem('poison',
+            `{"ts":${Date.now()},"data":{"rows":[{"ok":1},{"__proto__":{"polluted":1}}]}}`);
+        const data = readTtlJson('poison', 60_000);
+        assert.equal(data.rows.length, 2);
+        assert.equal(data.rows[0].ok, 1);
+        assert.equal(Object.prototype.hasOwnProperty.call(data.rows[1], '__proto__'), false);
+        assertNoDangerousKeys(data);
+        deepMerge({}, data.rows[1]);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('readTtlJson strips at DEEP nesting (5 levels down)', () => {
+        const ls = installLocalStorage(makeFakeLocalStorage());
+        ls.setItem('poison',
+            `{"ts":${Date.now()},"data":{"a":{"b":{"c":{"d":{"e":{"__proto__":{"polluted":1}}}}}}}}`);
+        const data = readTtlJson('poison', 60_000);
+        const deep = data.a.b.c.d.e;
+        assert.equal(Object.prototype.hasOwnProperty.call(deep, '__proto__'), false);
+        assertNoDangerousKeys(data);
+        deepMerge({}, data);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('readTtlJson strips nested "constructor" and "prototype" too', () => {
+        const ls = installLocalStorage(makeFakeLocalStorage());
+        ls.setItem('poison', `{"ts":${Date.now()},"data":{"a":{"constructor":{"prototype":{"polluted":1}}},` +
+            `"b":{"prototype":{"polluted":1}},"list":[{"constructor":{"polluted":1}}]}}`);
+        const data = readTtlJson('poison', 60_000);
+        assert.deepEqual(data.a, {});
+        assert.deepEqual(data.b, {});
+        assert.deepEqual(data.list, [{}]);
+        assertNoDangerousKeys(data);
+        deepMerge({}, data);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('readSnapshot strips a nested __proto__ inside the payload', () => {
+        const ls = installLocalStorage(makeFakeLocalStorage());
+        ls.setItem('snap', `{"at":${Date.now()},"payload":{"deep":{"x":[{"__proto__":{"polluted":1}}]}}}`);
+        const snap = readSnapshot('snap', 60_000);
+        assert.notEqual(snap, null);
+        assertNoDangerousKeys(snap);
+        assert.equal(snap.payload.deep.x.length, 1);
+        deepMerge({}, snap.payload);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('legacy migration strips a nested __proto__ on the way into the store', async () => {
+        const ls = makeFakeLocalStorage({
+            'app_cache_deep': '{"nested":{"__proto__":{"polluted":1},"keep":2}}'
+        });
+        const store = createCacheStore({
+            indexedDB: null, localStorage: ls, legacyPrefixes: ['app_cache_']
+        });
+        await store.init();
+        const migrated = store.get('app_cache_deep');
+        assert.equal(migrated.nested.keep, 2, 'legitimate nested keys survive');
+        assertNoDangerousKeys(migrated);
+        deepMerge({}, migrated);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('localStorageFacade.setItem strips a nested __proto__ and one in an array', async () => {
+        const store = createCacheStore({ indexedDB: null, localStorage: null });
+        await store.init();
+        const facade = store.localStorageFacade;
+        facade.setItem('poison', '{"cfg":{"__proto__":{"polluted":1},"keep":1},' +
+            '"rows":[{"__proto__":{"polluted":1}}]}');
+
+        const stored = store.get('poison');
+        assert.equal(stored.cfg.keep, 1);
+        assertNoDangerousKeys(stored);
+        // And nothing dangerous survives the JSON round-trip back out.
+        const roundTripped = JSON.parse(facade.getItem('poison'));
+        assertNoDangerousKeys(roundTripped);
+        deepMerge({}, roundTripped);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('CONTROL: ordinary nested data (objects, arrays, primitives) survives untouched', () => {
+        const ls = installLocalStorage(makeFakeLocalStorage());
+        const payload = {
+            a: 1, s: 'text', t: true, n: null,
+            nested: { deep: { deeper: [1, 'two', { three: 3 }] } },
+            list: [[1, 2], { k: 'v' }],
+            protoLike: 'the string "__proto__" as a VALUE is fine'
+        };
+        assert.equal(writeTtlJson('ok', payload), true);
+        const data = readTtlJson('ok', 60_000);
+        assert.deepEqual(data, payload, 'well-formed data deserializes exactly as before');
+        assert.equal(Object.getPrototypeOf(data), Object.prototype);
+        assert.equal(Object.getPrototypeOf(data.nested.deep), Object.prototype);
+        assert.ok(Array.isArray(data.nested.deep.deeper));
+        deepMerge({}, data);
+        assert.equal({}.polluted, undefined);
+    });
+
+    test('a CYCLIC already-parsed value is depolluted once, without hanging', async () => {
+        // JSON can't express a cycle, so no ingestion path can hand the
+        // (internal, unexported) depollute walker a cyclic input today — its
+        // WeakSet seen-guard + depth cap are there so a future non-JSON call
+        // site can't hang. What IS reachable is a cyclic live object going
+        // through the store, so assert that still terminates and round-trips.
+        const store = createCacheStore({ indexedDB: null, localStorage: null });
+        await store.init();
+        const cyclic = { name: 'root', child: { name: 'kid' } };
+        cyclic.child.parent = cyclic;   // cycle
+        cyclic.self = cyclic;
+        store.set('cyclic', cyclic);
+        const got = store.get('cyclic');
+        assert.equal(got.name, 'root');
+        assert.equal(got.child.name, 'kid');
+        assert.equal(got.child.parent.name, 'root', 'the cycle is preserved by structuredClone');
+        assertNoDangerousKeys(got);
+        assert.equal({}.polluted, undefined);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Tier 2 — createCacheStore (ported from JFS-Sports tests/cache-store.test.js)
 // ---------------------------------------------------------------------------
 
