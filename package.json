@@ -1,7 +1,7 @@
 {
   "name": "@jfs/cache-kit",
-  "version": "0.2.5",
-  "description": "Shared, dependency-free client-side storage/cache primitives (safe localStorage wrappers, JSON snapshots with TTL, quota-aware multi-key saves, and an IndexedDB-backed store with an in-memory mirror, structuredClone isolation, soft TTLs and legacy-localStorage migration) extracted from the JFS family of buildless static sites.",
+  "version": "0.3.0",
+  "description": "Shared, dependency-free client-side localStorage primitives (safe wrappers that never throw, JSON snapshots with TTL, and quota-aware multi-key saves) extracted from the JFS family of buildless static sites.",
   "type": "module",
   "license": "MIT",
   "author": "jsvolos63",
@@ -27,7 +27,6 @@
   ],
   "keywords": [
     "localstorage",
-    "indexeddb",
     "cache",
     "ttl",
     "snapshot",

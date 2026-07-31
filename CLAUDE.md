@@ -1,13 +1,38 @@
 # @jfs/cache-kit — working notes for Claude
 
-Shared, dependency-free client-side storage/cache primitives (safe
-localStorage wrappers, JSON snapshots with TTL, quota-aware multi-key
-saves, and an IndexedDB-backed store with an in-memory mirror,
-structuredClone isolation, soft TTLs and legacy-localStorage migration)
-extracted from the JFS family of buildless static sites. Consumers vendor
-this kit via its own CLI rather than installing it at runtime, so a change
-here reaches an app only once that app bumps its pin and re-runs
-`vendor:sync`.
+Shared, dependency-free client-side **localStorage** primitives (safe
+wrappers that never throw, JSON snapshots with TTL, and quota-aware
+multi-key saves) extracted from the JFS family of buildless static sites.
+Consumers vendor this kit via its own CLI rather than installing it at
+runtime, so a change here reaches an app only once that app bumps its pin
+and re-runs `vendor:sync`.
+
+## Scope: no IndexedDB store here (v0.3.0)
+
+The kit shipped a second tier until v0.3.0 — `createCacheStore` /
+`createPrefsStorage`, an IndexedDB store with an in-memory mirror,
+structuredClone isolation, soft TTLs and legacy-localStorage migration.
+It had exactly ONE consumer, JFS-Sports, while being half the kit's 583
+lines, so it went home as ordinary app source
+(`JFS-Sports/cache-store-idb.js` + its `tests/cache-store-idb.test.js`,
+bound to the app's deployed store identity by `cache-store.js`). Per the
+family's extraction bar below, a one-consumer tier never qualified.
+
+What's left is what three apps actually import, and nothing else:
+
+| export | consumer |
+| --- | --- |
+| `lsGet` / `lsSet` / `lsRemove` | FlightCheck `src/tracking/state.js` |
+| `saveSnapshot` / `readSnapshot` | Weather `js/lib/storage.js` |
+| `safeSetItem` / `writeTtlJson` / `readTtlJson` / `readTtlJsonTimestamp` | market-monitor `js/utils/cache.js`, `js/ui/news.js` |
+
+(`isQuotaError` is exported too — used internally by `safeSetItem`.)
+
+Don't re-add an IndexedDB store on one app's behalf: if a second and a
+third app need one, take `cache-store-idb.js` back rather than rebuilding
+it. `parseSafeJson` / `depollute` are NOT tier-2 leftovers — every
+snapshot reader here parses through them, and JFS-Sports carries its own
+copy for the two ingestion paths its store owns.
 
 <!-- jfs-family-conventions:start — managed by jfs-claude-md-sync; edit family/family-conventions.md in @jfs/vendor-cli -->
 

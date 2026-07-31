@@ -4,7 +4,7 @@ Shared, dependency-free **client-side storage / cache primitives** for the JFS
 family of buildless static sites (market-monitor, Surf-Tracker, FlightCheck,
 JFS-Sports, Art-Gallery-, Weather, BearsMockDraft, Zepbound-).
 
-Four sibling apps grew four different wrappers around the same two browser
+Three sibling apps grew three different wrappers around the same two browser
 facts — `localStorage` throws (private browsing, quota, locked-down iframes)
 and cached data goes stale — each copy slightly different, and the differences
 are exactly the subtle bugs (a quota rejection that silently drops the *rest*
@@ -18,10 +18,27 @@ primitives), `@jfs/pwa-kit` (service-worker strategies),
 guards).
 
 Pure ESM, **dependency-free at install and runtime**. `index.js` imports
-nothing and touches no global at import time — `localStorage` / `indexedDB` /
-`structuredClone` are resolved at call time (or injected via `deps`), so node
-tests can stub them on `globalThis` and non-browser environments degrade to
-safe no-ops.
+nothing and touches no global at import time — `localStorage` is resolved at
+call time, so node tests can stub it on `globalThis` and non-browser
+environments degrade to safe no-ops.
+
+## Scope (v0.3.0): localStorage primitives only
+
+The kit used to carry a second tier — `createCacheStore` /
+`createPrefsStorage`, an IndexedDB-backed store with an in-memory mirror,
+`structuredClone` isolation, soft TTLs and legacy-localStorage migration. It
+had exactly **one** consumer (JFS-Sports) while being half the kit's lines, so
+in v0.3.0 it went back to that app as ordinary source
+(`JFS-Sports/cache-store-idb.js`, bound to the app's store identity by
+`cache-store.js`). The family's extraction bar wants a **third** consumer
+before shared code earns a kit's permanent CI / pin / vendoring overhead — a
+one-consumer tier never cleared it.
+
+This is a **breaking** removal for anyone importing those two names; the ten
+localStorage helpers below are untouched, so the remaining consumers
+(Weather → `saveSnapshot` / `readSnapshot`, FlightCheck → `lsGet` / `lsSet` /
+`lsRemove`, market-monitor → `safeSetItem` / `writeTtlJson` / `readTtlJson` /
+`readTtlJsonTimestamp`) upgrade with no call-site change.
 
 ## Compatibility superset
 
@@ -38,10 +55,6 @@ two freshness comparisons are kept side by side rather than collapsed:
 
 The consolidated canonical sources:
 
-- `JFS-Sports/cache-store.js` — `createCacheStore` (the family's
-  best-in-class store: IndexedDB + in-memory mirror + `structuredClone`
-  isolation + soft TTLs + legacy-localStorage migration + localStorage-shaped
-  facade), `prefsStorage` (as the `createPrefsStorage` factory)
 - `FlightCheck/src/tracking/state.js` — `lsGet` / `lsSet` / `lsRemove`
 - `Weather/js/lib/storage.js` — `saveSnapshot` / `readSnapshot`
 - `market-monitor/js/utils/cache.js` — `isQuotaError`, its private
@@ -54,12 +67,12 @@ Everything lives in the single `index.js`:
 
 ```
 index.js
-├── Tier 1a — safe localStorage wrappers            (origin: FlightCheck)
+├── safe localStorage wrappers                      (origin: FlightCheck)
 │     lsGet(key)                 read; null on missing/unavailable/error
 │     lsSet(key, value)          best-effort write, never throws
 │     lsRemove(key)              best-effort remove, never throws
 │
-├── Tier 1b — quota-aware writes                    (origin: market-monitor)
+├── quota-aware writes                              (origin: market-monitor)
 │     isQuotaError(e)            QuotaExceededError / NS_ERROR_DOM_QUOTA_REACHED
 │                                / code 22 / code 1014
 │     safeSetItem(key, value, {ownedKeys})
@@ -67,52 +80,29 @@ index.js
 │                                ownedKeys and retry once (only when key is
 │                                itself owned) → boolean
 │
-├── Tier 1c — JSON snapshots with TTL
-│     saveSnapshot(key, payload)           write {at: now, payload}   (Weather)
-│     readSnapshot(key, maxAgeMs)          whole {at, payload} | null (Weather)
-│     writeTtlJson(key, data, {ts, ownedKeys})
-│                                          write {ts, data} via safeSetItem
-│                                          → boolean         (market-monitor)
-│     readTtlJson(key, maxAgeMs)           data | null; rejects non-object /
-│                                          array data        (market-monitor)
-│     readTtlJsonTimestamp(key, maxAgeMs)  ts | null, no data-shape check —
-│                                          for "as of …" labels
-│
-└── Tier 2 — IndexedDB store (advanced, opt-in)     (origin: JFS-Sports)
-      createCacheStore(deps)     async-persisted, sync-read KV store:
-                                 init() / get / set(key, value, {ttlMs}) /
-                                 delete / keys() / isReady /
-                                 localStorageFacade / _drain (test hook)
-      createPrefsStorage(store, {localStorage})
-                                 () => facade once store.isReady, else raw
-                                 localStorage (call-time resolution) or null
+└── JSON snapshots with TTL
+      saveSnapshot(key, payload)           write {at: now, payload}   (Weather)
+      readSnapshot(key, maxAgeMs)          whole {at, payload} | null (Weather)
+      writeTtlJson(key, data, {ts, ownedKeys})
+                                           write {ts, data} via safeSetItem
+                                           → boolean         (market-monitor)
+      readTtlJson(key, maxAgeMs)           data | null; rejects non-object /
+                                           array data        (market-monitor)
+      readTtlJsonTimestamp(key, maxAgeMs)  ts | null, no data-shape check —
+                                           for "as of …" labels
 ```
 
-### `createCacheStore(deps)` configuration
-
-`deps` carries both environment injections and per-app config, all optional:
-
-- `indexedDB`, `localStorage`, `structuredClone`, `now` — environment
-  (default: the globals; pass `null` to force memory-only / skip migration).
-- `dbName` (`'jfs-cache'`), `dbVersion` (`1`), `storeName` (`'kv'`) — IDB
-  identity. The defaults match the database JFS-Sports already deployed;
-  pass your own for a store with no history.
-- `legacyPrefixes` (`[]`) — localStorage keys (exact or prefix match)
-  migrated into the store on first `init()`, then removed from localStorage.
-- `wrapMarker` (`'__jfsW'`) — marker property on the TTL wrapper objects.
-  The default matches data already on disk in deployed apps; only change it
-  for a fresh store.
-- `warnLabel` (`'[cache-kit]'`) — prefix for the once-per-session console
-  warnings (hydrate failure, first failed write).
+Every ingestion path parses through a `__proto__`/`constructor`/`prototype`
+stripping reviver, at every nesting level (arrays included), so a poisoned
+localStorage entry can't pollute a consumer that deep-merges the result.
 
 ## Quick start
 
 ```js
 import {
-  lsGet, lsSet,                          // tier 1a
-  saveSnapshot, readSnapshot,            // tier 1c (Weather shape)
-  writeTtlJson, readTtlJson,             // tier 1c (market-monitor shape)
-  createCacheStore, createPrefsStorage,  // tier 2
+  lsGet, lsSet,                 // safe wrappers
+  saveSnapshot, readSnapshot,   // snapshots (Weather shape)
+  writeTtlJson, readTtlJson,    // snapshots (market-monitor shape)
 } from '@jfs/cache-kit';
 
 // Never-throwing localStorage:
@@ -129,13 +119,6 @@ const OWNED = ['app_light_cache', 'app_main_cache'];
 const ts = Date.now();
 writeTtlJson('app_light_cache', light, { ts, ownedKeys: OWNED });
 writeTtlJson('app_main_cache', main, { ts, ownedKeys: OWNED });
-
-// IndexedDB-backed store with sync reads:
-const store = createCacheStore({ dbName: 'my-app', legacyPrefixes: ['myapp_'] });
-await store.init();
-store.set('scores_2026-07-01', payload, { ttlMs: 45_000 });
-const scores = store.get('scores_2026-07-01');   // isolated copy, or null
-const prefsStorage = createPrefsStorage(store);  // localStorage-shaped facade
 ```
 
 ## Consuming from the sibling apps
@@ -162,8 +145,8 @@ runtime. Follow `netlify-kit`'s vendoring model:
    ```
 
    Use `--format bare` for an export-stripped copy for classic-script
-   concatenation builds (JFS-Sports' pattern). CI gates `vendor:check`, so a
-   pin bump without a regenerated vendored copy fails the build.
+   concatenation builds. CI gates `vendor:check`, so a pin bump without a
+   regenerated vendored copy fails the build.
 
 3. To upgrade: bump the pinned SHA, `npm install && npm run vendor:sync`,
    commit the refreshed vendored file(s), and bump the repo's shipped version
@@ -186,12 +169,9 @@ npm test        # node --test test.mjs
 node --check index.js
 ```
 
-No devDependencies: the suite hand-rolls its `localStorage` fake (with a
-quota-throwing item cap) and a microtask-driven IndexedDB stub, installing
-them on `globalThis` before exercising the helpers — the same pattern the
-origin app suites used. The tier-2 cases are ported from JFS-Sports'
-`tests/cache-store.test.js` so the canonical behavior is enforced here, in
-the kit, from day one. CI (`.github/workflows/test.yml`) runs
+The suite hand-rolls its `localStorage` fake (with a quota-throwing item cap)
+and installs it on `globalThis` before exercising the helpers — the same
+pattern the origin app suites used. CI (`.github/workflows/test.yml`) runs
 `node --check index.js` plus the suite on every push and PR.
 
 ## License
