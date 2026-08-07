@@ -9,13 +9,14 @@ facts — `localStorage` throws (private browsing, quota, locked-down iframes)
 and cached data goes stale — each copy slightly different, and the differences
 are exactly the subtle bugs (a quota rejection that silently drops the *rest*
 of a multi-key save, a snapshot that outlives its data, caller mutation
-poisoning a cached object). This module is the single tested copy. It is the
-5th kit in the family, after
+poisoning a cached object). This module is the single tested copy. It sits
+alongside
 [`@jfs/netlify-kit`](https://github.com/jsvolos63/netlify-kit) (serverless
 primitives), `@jfs/pwa-kit` (service-worker strategies),
-[`@jfs/news-kit`](https://github.com/jsvolos63/news-kit) (RSS pipeline), and
-[`@jfs/dom-kit`](https://github.com/jsvolos63/dom-kit) (escaping / URL
-guards).
+[`@jfs/news-kit`](https://github.com/jsvolos63/news-kit) (RSS pipeline, plus
+the escaping / URL guards / DOM helpers it absorbed from the retired
+`@jfs/dom-kit` at v0.12.0), and `@jfs/fetch-kit` (browser fetch
+primitives).
 
 Pure ESM, **dependency-free at install and runtime**. `index.js` imports
 nothing and touches no global at import time — `localStorage` is resolved at
@@ -43,7 +44,7 @@ localStorage helpers below are untouched, so the remaining consumers
 ## Compatibility superset
 
 Apps adopt the kit by **changing import paths, not call sites** — the same
-rule `netlify-kit` and `dom-kit` follow. Every helper keeps its origin's exact
+rule `netlify-kit` and `news-kit` follow. Every helper keeps its origin's exact
 name, signature, and **on-disk format**, so data already in users' browsers
 keeps parsing after adoption. In particular, the two snapshot shapes and their
 two freshness comparisons are kept side by side rather than collapsed:
