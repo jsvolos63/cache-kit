@@ -1,11 +1,12 @@
 # @jfs/cache-kit — working notes for Claude
 
-Shared, dependency-free client-side **localStorage** primitives (safe
-wrappers that never throw, JSON snapshots with TTL, and quota-aware
-multi-key saves) extracted from the JFS family of buildless static sites.
-Consumers vendor this kit via its own CLI rather than installing it at
-runtime, so a change here reaches an app only once that app bumps its pin
-and re-runs `vendor:sync`.
+**RETIRED.** This kit's entire surface was absorbed verbatim into
+`@jfs/fetch-kit` at fetch-kit v0.2.0 — the same consolidation news-kit made
+on dom-kit and modal-kit. All three consumers (FlightCheck, Weather,
+market-monitor) re-pinned to fetch-kit and dropped this pin; nothing
+vendors this repo anymore. Make no further changes here — the repo exists
+as read-only history and should be archived like dom-kit and modal-kit.
+The notes below describe the kit as it was.
 
 ## Scope: no IndexedDB store here (v0.3.0)
 
