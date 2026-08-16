@@ -1,7 +1,7 @@
 {
   "name": "@jfs/cache-kit",
   "version": "0.3.0",
-  "description": "Shared, dependency-free client-side localStorage primitives (safe wrappers that never throw, JSON snapshots with TTL, and quota-aware multi-key saves) extracted from the JFS family of buildless static sites.",
+  "description": "RETIRED — absorbed into @jfs/fetch-kit v0.2.0. Shared client-side localStorage primitives; vendor them from fetch-kit instead.",
   "type": "module",
   "license": "MIT",
   "author": "jsvolos63",

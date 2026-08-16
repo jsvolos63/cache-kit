@@ -1,3 +1,21 @@
+# ⚠️ RETIRED — absorbed into [@jfs/fetch-kit](https://github.com/jsvolos63/fetch-kit)
+
+**This kit is retired.** Its entire surface — the safe localStorage wrappers
+(`lsGet`/`lsSet`/`lsRemove`), quota-aware writes (`isQuotaError`/`safeSetItem`),
+and both TTL-snapshot shapes (`saveSnapshot`/`readSnapshot`,
+`writeTtlJson`/`readTtlJson`/`readTtlJsonTimestamp`) — moved **verbatim** into
+`@jfs/fetch-kit` at its v0.2.0, the same consolidation news-kit made on
+dom-kit and modal-kit. Every consumer (FlightCheck, Weather, market-monitor)
+has re-pinned; nothing imports this repo anymore.
+
+- Vendor the surface from fetch-kit: `jfs-fetch-kit-vendor --format esm --out <path>`
+- Do **not** re-add an `@jfs/cache-kit` pin anywhere.
+- This repo should be archived (read-only), like dom-kit and modal-kit before it.
+
+The original README follows for historical reference.
+
+---
+
 # @jfs/cache-kit
 
 Shared, dependency-free **client-side storage / cache primitives** for the JFS
